@@ -71,8 +71,9 @@ function downloadPrebuild(opts, cb) {
         var gh = new GitHub({
           token: opts.ghtoken
         });
+        var pkgInfo = githubInfoFromPackage(opts.pkg);
 
-        var repo = gh.getRepo('antoinepairet', 'beid');
+        var repo = gh.getRepo(pkgInfo.userOrOrg, pkgInfo.repo);
         repo.listReleases(function (err, releases) {
           console.log('done');
           // Find the right release:
