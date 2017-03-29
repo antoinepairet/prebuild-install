@@ -9,9 +9,33 @@ var util = require('./util')
 var error = require('./error')
 var url = require('url')
 var tunnel = require('tunnel-agent')
+var _ = require('lodash')
 
-function downloadPrebuild (opts, cb) {
+function githubInfoFromPackage(pkg) {
+  var m;
+  if (m = githubMatch(JSON.stringify(pkg.repository))) {
+    return m;
+  }
+  else if (m = githubMatch(JSON.stringify(pkg))) {
+    return m;
+  }
+  return undefined;
+};
+
+function githubMatch(str) {
+  var m = /\bgithub.com[:\/]([^\/"]+)\/([^\/"]+)/.exec(str);
+  if (m) {
+    return {
+      userOrOrg: m[1],
+      repo: m[2].replace(/\.git$/, '')
+    };
+  }
+}
+
+function downloadPrebuild(opts, cb) {
+
   var downloadUrl = util.getDownloadUrl(opts)
+  var packageName = util.getPackageName(opts)
   var cachedPrebuild = util.cachedPrebuild(downloadUrl)
   var localPrebuild = util.localPrebuild(downloadUrl)
   var tempFile = util.tempFile(cachedPrebuild)
@@ -28,10 +52,10 @@ function downloadPrebuild (opts, cb) {
       return unpack()
     }
 
-    download()
+    download(opts)
   })
 
-  function download () {
+  function download(opts) {
     ensureNpmCacheDir(function (err) {
       if (err) return onerror(err)
 
@@ -41,57 +65,90 @@ function downloadPrebuild (opts, cb) {
           log.info('found cached prebuild')
           return unpack()
         }
+        var GitHub = require('github-api');
 
-        log.http('request', 'GET ' + downloadUrl)
-        var reqOpts = { url: downloadUrl }
-        var proxy = opts['https-proxy'] || opts.proxy
+        // basic auth
+        var gh = new GitHub({
+          token: opts.ghtoken
+        });
 
-        if (proxy) {
-          var parsedDownloadUrl = url.parse(downloadUrl)
-          var parsedProxy = url.parse(proxy)
-          var uriProtocol = (parsedDownloadUrl.protocol === 'https:' ? 'https' : 'http')
-          var proxyProtocol = (parsedProxy.protocol === 'https:' ? 'Https' : 'Http')
-          var tunnelFnName = [uriProtocol, proxyProtocol].join('Over')
-          reqOpts.agent = tunnel[tunnelFnName]({
-            proxy: {
-              host: parsedProxy.hostname,
-              port: +parsedProxy.port,
-              proxyAuth: parsedProxy.auth
-            }
+        var repo = gh.getRepo('antoinepairet', 'beid');
+        repo.listReleases(function (err, releases) {
+          console.log('done');
+          // Find the right release:
+          var release = _.find(releases, function (r) {
+            return r.tag_name === ('v' + opts.pkg.version)
           })
-        }
 
-        var req = get(reqOpts, function (err, res) {
-          if (err) return onerror(err)
-          log.http(res.statusCode, downloadUrl)
-          if (res.statusCode !== 200) return onerror()
-          fs.mkdir(util.prebuildCache(), function () {
-            log.info('downloading to @', tempFile)
-            pump(res, fs.createWriteStream(tempFile), function (err) {
-              if (err) return onerror(err)
-              fs.rename(tempFile, cachedPrebuild, function (err) {
-                if (err) return cb(err)
-                log.info('renaming to @', cachedPrebuild)
-                unpack()
+          // Find the right asset to download
+          var asset = _.find(release.assets, function (a) {
+            return a.name === packageName
+          });
+          var pkgInfo = githubInfoFromPackage(opts.pkg);
+          var downloadUrl = 'https://';
+          if (opts.ghtoken) {
+            downloadUrl += `${opts.ghtoken}:@`;
+          }
+          downloadUrl += `api.github.com/repos/${pkgInfo.userOrOrg}/${pkgInfo.repo}/releases/assets/${asset.id}`;
+
+          var reqOpts = {
+            url: downloadUrl,
+            headers: {
+              'Accept': 'application/octet-stream',
+              'User-Agent': 'request'
+            },
+            encoding: null // We want a buffer, not a string
+          };
+
+          var proxy = opts['https-proxy'] || opts.proxy
+
+          if (proxy) {
+            var parsedDownloadUrl = url.parse(downloadUrl)
+            var parsedProxy = url.parse(proxy)
+            var uriProtocol = (parsedDownloadUrl.protocol === 'https:' ? 'https' : 'http')
+            var proxyProtocol = (parsedProxy.protocol === 'https:' ? 'Https' : 'Http')
+            var tunnelFnName = [uriProtocol, proxyProtocol].join('Over')
+            reqOpts.agent = tunnel[tunnelFnName]({
+              proxy: {
+                host: parsedProxy.hostname,
+                port: +parsedProxy.port,
+                proxyAuth: parsedProxy.auth
+              }
+            })
+          }
+
+          var req = get(reqOpts, function (err, res) {
+            if (err) return onerror(err)
+            log.http(res.statusCode, downloadUrl)
+            if (res.statusCode !== 200) return onerror()
+            fs.mkdir(util.prebuildCache(), function () {
+              log.info('downloading to @', tempFile)
+              pump(res, fs.createWriteStream(tempFile), function (err) {
+                if (err) return onerror(err)
+                fs.rename(tempFile, cachedPrebuild, function (err) {
+                  if (err) return cb(err)
+                  log.info('renaming to @', cachedPrebuild)
+                  unpack()
+                })
               })
             })
           })
-        })
 
-        req.setTimeout(30 * 1000, function () {
-          req.abort()
-        })
+          req.setTimeout(30 * 1000, function () {
+            req.abort()
+          })
+        });
       })
 
-      function onerror (err) {
-        fs.unlink(tempFile, function () {
-          cb(err || error.noPrebuilts(opts))
-        })
-      }
+
     })
   }
-
-  function unpack () {
+  function onerror(err) {
+    fs.unlink(tempFile, function () {
+      cb(err || error.noPrebuilts(opts))
+    })
+  }
+  function unpack() {
     var binaryName
 
     var updateName = opts.updateName || function (entry) {
@@ -130,11 +187,11 @@ function downloadPrebuild (opts, cb) {
         }
       }
 
-      cb(null, resolved)
-    })
+        cb(null, resolved)
+      })
   }
 
-  function ensureNpmCacheDir (cb) {
+  function ensureNpmCacheDir(cb) {
     var cacheFolder = util.npmCache()
     if (fs.access) {
       fs.access(cacheFolder, fs.R_OK | fs.W_OK, function (err) {
@@ -150,7 +207,7 @@ function downloadPrebuild (opts, cb) {
       })
     }
 
-    function makeNpmCacheDir () {
+    function makeNpmCacheDir() {
       log.info('npm cache directory missing, creating it...')
       fs.mkdir(cacheFolder, cb)
     }

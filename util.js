@@ -3,9 +3,10 @@ var github = require('github-from-package')
 var home = require('os-homedir')
 var expandTemplate = require('expand-template')()
 
-function getDownloadUrl (opts) {
+
+function _expandTemplate (tpl, opts) {
   var pkgName = opts.pkg.name.replace(/^@\w+\//, '')
-  return expandTemplate(urlTemplate(opts), {
+  return expandTemplate(tpl, {
     name: pkgName,
     package_name: pkgName,
     version: opts.pkg.version,
@@ -24,13 +25,20 @@ function getDownloadUrl (opts) {
     module_name: opts.pkg.binary && opts.pkg.binary.module_name
   })
 }
+const packageName = '{name}-v{version}-{runtime}-v{abi}-{platform}{libc}-{arch}.tar.gz'
+
+function getDownloadUrl(opts) {
+  return _expandTemplate(urlTemplate(opts), opts);
+}
+function getPackageName(opts) {
+  return _expandTemplate(packageName, opts);
+}
 
 function urlTemplate (opts) {
   if (typeof opts.download === 'string') {
     return opts.download
   }
 
-  var packageName = '{name}-v{version}-{runtime}-v{abi}-{platform}{libc}-{arch}.tar.gz'
   if (opts.pkg.binary) {
     return [
       opts.pkg.binary.host,
@@ -40,6 +48,8 @@ function urlTemplate (opts) {
       return trimSlashes(path)
     }).filter(Boolean).join('/')
   }
+
+
   return github(opts.pkg) + '/releases/download/v{version}/' + packageName
 }
 
@@ -72,6 +82,7 @@ function isYarnPath (execPath) {
 }
 
 exports.getDownloadUrl = getDownloadUrl
+exports.getPackageName = getPackageName
 exports.urlTemplate = urlTemplate
 exports.cachedPrebuild = cachedPrebuild
 exports.localPrebuild = localPrebuild
