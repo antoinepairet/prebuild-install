@@ -20,6 +20,7 @@
   ],
   "dependencies": {
     "expand-template": "^1.0.2",
+    "github-api": "^3.0.0",
     "github-from-package": "0.0.0",
     "minimist": "^1.2.0",
     "node-abi": "^2.0.0",
