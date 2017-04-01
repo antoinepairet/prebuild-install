@@ -75,7 +75,6 @@ function downloadPrebuild(opts, cb) {
 
         var repo = gh.getRepo(pkgInfo.userOrOrg, pkgInfo.repo);
         repo.listReleases(function (err, releases) {
-          console.log('done');
           // Find the right release:
           var release = _.find(releases, function (r) {
             return r.tag_name === ('v' + opts.pkg.version)
@@ -118,13 +117,13 @@ function downloadPrebuild(opts, cb) {
             })
           }
 
-          var req = get(reqOpts, function (err, res) {
+          var req = require('request')(reqOpts, function (err, res) {
             if (err) return onerror(err)
             log.http(res.statusCode, downloadUrl)
             if (res.statusCode !== 200) return onerror()
             fs.mkdir(util.prebuildCache(), function () {
               log.info('downloading to @', tempFile)
-              pump(res, fs.createWriteStream(tempFile), function (err) {
+              fs.writeFile(tempFile, res.body, function (err) {
                 if (err) return onerror(err)
                 fs.rename(tempFile, cachedPrebuild, function (err) {
                   if (err) return cb(err)
@@ -135,9 +134,9 @@ function downloadPrebuild(opts, cb) {
             })
           })
 
-          req.setTimeout(30 * 1000, function () {
-            req.abort()
-          })
+          // req.setTimeout(30 * 1000, function () {
+          //   req.abort()
+          // })
         });
       })
 
